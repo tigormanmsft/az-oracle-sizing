@@ -30,7 +30,9 @@
  *
  * Modifications:
  *      TGorman 26-Aug 2020     v1.0 - written
+ *      TGorman 03-Sep 2020     v1.1 - added SQL*Plus "set" for formatting
  ********************************************************************************/
+set pagesize 100 linesize 130 trimout on trimspool on pause off
 col name new_value V_DBNAME noprint
 select name from v$database;
 spool dbspace_&&V_DBNAME
