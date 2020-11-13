@@ -85,6 +85,7 @@ order by sort0;
 
 clear breaks computes
 break on day on report
+compute avg of mb on report
 compute sum of mb on report
 col sort0 noprint
 col day heading "Day"
