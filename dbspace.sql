@@ -33,10 +33,17 @@
  *      TGorman 03-Sep 2020     v1.1 - added SQL*Plus "set" for formatting
  *      TGorman 30-Nov 2020     v1.2 - added queries on V$LOG/V$LOGFILE for redo
  *                                     group/member info
+ *      TGorman 30-Nov 2020     v1.3 - added query with HCC recompression calcs
  ********************************************************************************/
-set pagesize 100 linesize 130 trimout on trimspool on pause off
+set echo off feedback off timing off pagesize 100 linesize 130 trimout on trimspool on verify off
+define V_AH_RATIO="18"  -- compression ratio for ARCHIVE HIGH
+define V_AL_RATIO="15"  -- compression ratio for ARCHIVE LOW
+define V_QH_RATIO="10"  -- compression ratio for QUERY HIGH
+define V_QL_RATIO="6"   -- compression ratio for QUERY LOW
+define V_B_RATIO="3"    -- compression ratio for BASIC/OLTP/ADVANCED
 col name new_value V_DBNAME noprint
 select name from v$database;
+set feedback on
 spool dbspace_&&V_DBNAME
 clear breaks computes
 break on report
@@ -56,25 +63,115 @@ from    (select 'Datafile' type, bytes from dba_data_files
 group by type
 order by type;
 
+col segment_type heading "Segment Type"
+col compression heading "Enabled?"
+col compress_for heading "Compression Type"
+col rw_ro format a9 heading "Read-Only?"
+col mb format 999,999,990.00 heading "Seg Size (MB)"
+col recompressed_mb format 999,999,990.00 heading "Addl MB after|Recompression"
+col cnt format 999,990 heading "# Segs"
 clear breaks computes
-break on con_id on thread# on group# on members on report
-col con_id heading "Container"
+break on segment_type on compression on compress_for on rw_ro on report
+compute sum of mb on report
+compute sum of recompressed_mb on report
+compute sum of cnt on report
+spool tables_compressed
+select  s.segment_type,
+        t.compression,
+        t.compress_for,
+        decode(x.status, 'ONLINE', null, x.status) rw_ro,
+        sum(s.bytes)/1048576 mb,
+        decode(t.compression,
+                'ENABLED', decode(t.compress_for,
+                                'ARCHIVE LOW', (((sum(s.bytes)*&&V_AL_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'ARCHIVE HIGH', (((sum(s.bytes)*&&V_AH_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'QUERY LOW', (((sum(s.bytes)*&&V_QL_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'QUERY HIGH', (((sum(s.bytes)*&&V_QH_RATIO)/&&V_B_RATIO)-sum(s.bytes)))/1048576) recompressed_mb,
+        count(*) cnt
+from    dba_tables t,
+        dba_segments s,
+        dba_tablespaces x
+where   t.partitioned = 'NO'
+and     t.tablespace_name is not null
+and     s.segment_type = 'TABLE'
+and     s.owner = t.owner
+and     s.segment_name = t.table_name
+and     x.tablespace_name = s.tablespace_name
+group by s.segment_type,
+         t.compression,
+         t.compress_for,
+         decode(x.status, 'ONLINE', null, x.status)
+union all
+select  s.segment_type,
+        t.compression,
+        t.compress_for,
+        decode(x.status, 'ONLINE', null, x.status) rw_ro,
+        sum(s.bytes)/1048576 mb,
+        decode(t.compression,
+                'ENABLED', decode(t.compress_for,
+                                'ARCHIVE LOW', (((sum(s.bytes)*&&V_AL_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'ARCHIVE HIGH', (((sum(s.bytes)*&&V_AH_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'QUERY LOW', (((sum(s.bytes)*&&V_QL_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'QUERY HIGH', (((sum(s.bytes)*&&V_QH_RATIO)/&&V_B_RATIO)-sum(s.bytes)))/1048576) recompressed_mb,
+        count(*) cnt
+from    dba_tab_partitions t,
+        dba_segments s,
+        dba_tablespaces x
+where   t.subpartition_count = 0
+and     t.tablespace_name is not null
+and     s.segment_type = 'TABLE PARTITION'
+and     s.owner = t.table_owner
+and     s.segment_name = t.table_name
+and     s.partition_name = t.partition_name
+and     x.tablespace_name = s.tablespace_name
+group by s.segment_type,
+         t.compression,
+         t.compress_for,
+         decode(x.status, 'ONLINE', null, x.status)
+union all
+select  s.segment_type,
+        t.compression,
+        t.compress_for,
+        decode(x.status, 'ONLINE', null, x.status) rw_ro,
+        sum(s.bytes)/1048576 mb,
+        decode(t.compression,
+                'ENABLED', decode(t.compress_for,
+                                'ARCHIVE LOW', (((sum(s.bytes)*&&V_AL_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'ARCHIVE HIGH', (((sum(s.bytes)*&&V_AH_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'QUERY LOW', (((sum(s.bytes)*&&V_QL_RATIO)/&&V_B_RATIO)-sum(s.bytes)),
+                                'QUERY HIGH', (((sum(s.bytes)*&&V_QH_RATIO)/&&V_B_RATIO)-sum(s.bytes)))/1048576) recompressed_mb,
+        count(*) cnt
+from    dba_tab_subpartitions t,
+        dba_segments s,
+        dba_tablespaces x
+where   t.tablespace_name is not null
+and     s.segment_type = 'TABLE SUBPARTITION'
+and     s.owner = t.table_owner
+and     s.segment_name = t.table_name
+and     s.partition_name = t.subpartition_name
+and     x.tablespace_name = s.tablespace_name
+group by s.segment_type,
+         t.compression,
+         t.compress_for,
+         decode(x.status, 'ONLINE', null, x.status)
+order by 1, 2, 3, 4, 5 desc;
+
+clear breaks computes
+break on thread# on group# on members on report
 col thread# heading "Thread"
 col group# heading "Group"
 col members heading "Members"
 col mb format 999,999,990.00 heading "Member Size (MB)"
 compute sum of mb on report
-select  con_id,
-        thread#,
+select  thread#,
         group#,
         members,
         max(bytes)/1048576 mb
 from    v$log
-group by con_id,
-         thread#,
+group by thread#,
          group#,
          members
-order by 1, 2, 3, 4;
+order by 1, 2, 3;
 
 col sort0 noprint
 col dbf_mb format 999,999,999,990.00 heading "Source|database|files (MB)"
