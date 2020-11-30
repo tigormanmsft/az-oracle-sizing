@@ -31,6 +31,8 @@
  * Modifications:
  *      TGorman 26-Aug 2020     v1.0 - written
  *      TGorman 03-Sep 2020     v1.1 - added SQL*Plus "set" for formatting
+ *      TGorman 30-Nov 2020     v1.2 - added queries on V$LOG/V$LOGFILE for redo
+ *                                     group/member info
  ********************************************************************************/
 set pagesize 100 linesize 130 trimout on trimspool on pause off
 col name new_value V_DBNAME noprint
@@ -53,6 +55,26 @@ from    (select 'Datafile' type, bytes from dba_data_files
          select 'BCTfile' type, nvl(bytes,0) bytes from v$block_change_tracking)
 group by type
 order by type;
+
+clear breaks computes
+break on con_id on thread# on group# on members on report
+col con_id heading "Container"
+col thread# heading "Thread"
+col group# heading "Group"
+col members heading "Members"
+col mb format 999,999,990.00 heading "Member Size (MB)"
+compute sum of mb on report
+select  con_id,
+        thread#,
+        group#,
+        members,
+        max(bytes)/1048576 mb
+from    v$log
+group by con_id,
+         thread#,
+         group#,
+         members
+order by 1, 2, 3, 4;
 
 col sort0 noprint
 col dbf_mb format 999,999,999,990.00 heading "Source|database|files (MB)"
