@@ -75,7 +75,6 @@ break on segment_type on compression on compress_for on rw_ro on report
 compute sum of mb on report
 compute sum of recompressed_mb on report
 compute sum of cnt on report
-spool tables_compressed
 select  s.segment_type,
         t.compression,
         t.compress_for,
