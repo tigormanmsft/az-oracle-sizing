@@ -41,16 +41,20 @@ REM	TGorman 27apr20 v0.1	written
 REM	TGorman	04may20	v0.2	removed NTILE, using only ROW_NUMBER now...
 REM	NBhandare 14May21 v0.3	added reference to innermost subqueries as fix for
 REM				instance restart...
+REM	TGorman	01jun21	v0.4	cleaned up some mistakes, parameterized 
 REM ================================================================================
 set pages 100 lines 80 verify off echo off feedback 6 timing off recsep off
 col dbid heading 'DB ID'
 col con_id format 90 heading 'Con|ID'
 col instance_number format 90 heading 'I#'
 col snap_id heading 'AWR|Snap ID'
-col begin_time format a12 heading 'Beginning|time' word_wrap
-col end_time format a12 heading 'Ending|time' word_wrap
+col begin_tm format a20 heading 'Beginning|time' word_wrap
+col end_tm format a20 heading 'Ending|time' word_wrap
 col pio heading 'Physical|Reads|(PIO)'
 col cpu heading 'CPU used by|this session|(CPU)'
+define V_BUCKETS=98		/* only retain values from 98th percentile or below */
+define V_CPU_FACTOR=1		/* multiplicative factor to favor/disfavor CPU metrics */
+define V_PIO_FACTOR=5		/* multiplicative factor to favor/disfavor I/O metrics */
 spool busiest_awr
 select	x.instance_number,
 	x.snap_id,
@@ -60,10 +64,10 @@ select	x.instance_number,
 	x.cpu
 from	(select	instance_number, snap_id, pio, cpu, row_number() over (partition by instance_number order by sortby desc) rn
 	 from	(select	instance_number, snap_id,
-		 	sum(pio) pio, sum(cpu) cpu, sum(sortby) sortby
+		 	sum(pio) pio, sum(cpu) cpu, avg(sortby) sortby
 		 from	(select	instance_number, snap_id, pio, cpu, sortby
 			 from	(select instance_number, snap_id, value pio, 0 cpu, (value*(&&V_PIO_FACTOR)) sortby,
-					ntile(&&V_BUCKETS) over (partition by instance_number order by value) bucket
+					ntile(100) over (partition by instance_number order by value) bucket
 				 from	(select	s.instance_number, s.snap_id,
 						nvl(decode(greatest(value, nvl(lag(value) over (partition by h.startup_time, s.instance_number order by s.snap_id),0)),
 							value, value - lag(value) over (partition by h.startup_time, s.instance_number order by s.snap_id), value), 0) value
@@ -75,7 +79,7 @@ from	(select	instance_number, snap_id, pio, cpu, row_number() over (partition by
 					 and	h.snap_id = s.snap_id)
 				 union all
 				 select	instance_number, snap_id, 0 pio, value cpu, (value*(&&V_CPU_FACTOR)) sortby,
-					ntile(&&V_BUCKETS) over (partition by instance_number order by value) bucket
+					ntile(100) over (partition by instance_number order by value) bucket
 				 from	(select	s.instance_number, s.snap_id,
 						nvl(decode(greatest(value, nvl(lag(value) over (partition by h.startup_time, s.instance_number order by s.snap_id),0)),
 							value, value - lag(value) over (partition by h.startup_time, s.instance_number order by s.snap_id), value), 0) value
@@ -85,7 +89,7 @@ from	(select	instance_number, snap_id, pio, cpu, row_number() over (partition by
 					 and	h.dbid = s.dbid
 					 and	h.instance_number = s.instance_number
 					 and	h.snap_id = s.snap_id))
-			 where bucket = &&V_BUCKETS)
+			 where bucket <= &&V_BUCKETS)
 	 group by instance_number, snap_id)) x,
 	dba_hist_snapshot s
 where	s.snap_id = x.snap_id
